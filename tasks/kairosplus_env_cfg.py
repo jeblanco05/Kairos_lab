@@ -18,14 +18,14 @@ from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from isaaclab.envs.common import ViewerCfg
 
-from cfg.robotcfg import KAIROS_CFG, KAIROS_CFG_RG6
+from robot_cfg.robotcfg import KAIROS_CFG, KAIROS_CFG_RG6
 from controllers.local_base_action import LocalBaseVelocityActionCfg, MecanumChassisVelocityActionCfg
 from tasks import mdp 
 
-# 1. Configuración del Terreno
+# 1. Terrain configuration
 TERRAIN_CFG = terrain_gen.TerrainGeneratorCfg(
     size=(8.0, 8.0),
-    border_width=20.0,
+    border_width=5.0,
     num_rows=9,
     num_cols=9,
     curriculum=True,
@@ -45,7 +45,7 @@ COBBLESTONE_ROAD_CFG = terrain_gen.TerrainGeneratorCfg(
     size=(12.0, 12.0),
     num_rows=9,
     num_cols=21,
-    curriculum=True, # Asegúrate de que esto esté en True
+    curriculum=True, # Make sure this is True
     difficulty_range=(0.0, 1.0),
     sub_terrains={
         "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=0.2)
@@ -62,7 +62,7 @@ class KairosSceneCfg(InteractiveSceneCfg):
         prim_path="/World/ground",
         terrain_type="generator",
         terrain_generator=TERRAIN_CFG,
-        max_init_terrain_level=0,
+        max_init_terrain_level=0, #TODO
         collision_group=-1,
         physics_material=sim_utils.RigidBodyMaterialCfg(
             friction_combine_mode="multiply",
@@ -85,7 +85,7 @@ class KairosSceneCfg(InteractiveSceneCfg):
         prim_path="/World/skyLight",
         spawn=sim_utils.DomeLightCfg(
             intensity=750.0,
-            texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+            texture_file=f"{ISAACLAB_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
         ),
     )
 
@@ -108,49 +108,40 @@ class KairosSceneCfg(InteractiveSceneCfg):
         track_air_time=False
     )
 
-# 2. Configuración de Acciones (Action Space)
+# 2. Action configuration (Action Space)
 @configclass
 class KairosActionsCfg:
-    # Acción para la base (Control de velocidad de las articulaciones virtuales)
+    # Action for the base (virtual wheel joint velocity control)
     base_velocity = MecanumChassisVelocityActionCfg()
 
-    # Acción para el brazo (Control de posición del UR5e)
+    # Action for the arm (UR5e joint position control)
     arm_position = mdp.JointPositionActionCfg(
-        asset_name="robot", joint_names=["arm_.*_joint"], scale=1.0
+        asset_name="robot", joint_names=["arm_.*_joint"], scale=0.05, use_default_offset=True
     )
 
-# 3. Configuración de Observaciones (Observation Space)
+# 3. Observation configuration (Observation Space)
 @configclass
 class KairosObservationsCfg:
 
     @configclass
     class PolicyCfg(ObsGroup):
-        """Observaciones disponibles también en el robot real (sin información privilegiada)."""
+        """Observations also available on the real robot (without privileged information)."""
  
-        # --- Estado de la base ---
+        # --- Base state ---
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
-        # Inclinación de la base respecto a la gravedad (IMU)
+        # Base tilt with respect to gravity (IMU)
         base_projected_gravity = ObsTerm(func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05))
  
-        # --- Comandos (tarea 1: velocidad de la base; tarea 2: pose objetivo de la bandeja) ---
-        # OJO: el comando de velocidad NO lleva ruido. Es la consigna que el propio
-        # simulador/tarea le da a la política (no una medida de un sensor), así que
-        # añadirle ruido no modela ninguna incertidumbre física real; sólo haría más
-        # difícil aprender a seguirlo. El resto de observaciones sí llevan ruido porque
-        # en el robot real vendrían de sensores (odometría, IMU, encoders, FK).
+        # --- Commands (task 1: base velocity; task 2: target tray pose) ---
         velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
-        tray_pose_command = ObsTerm(
-            func=mdp.command_position,
-            params={"command_name": "tray_pose"},
-            noise=Unoise(n_min=-0.01, n_max=0.01),
-        )
+        tray_pose_command = ObsTerm(func=mdp.command_position,params={"command_name": "tray_pose"},noise=Unoise(n_min=-0.01, n_max=0.01),)
  
-        # --- Articulaciones del BRAZO únicamente (se excluyen ruedas y dedos de la pinza,
-        #     que no forman parte del espacio de acciones ni son relevantes para la política) ---
+        # --- ARM joints only (excluding wheels and gripper fingers,
+        #     which are not part of the action space and are not relevant to policy learning) ---
         arm_joint_pos = ObsTerm(
             func=mdp.joint_pos_rel,
             params={"asset_cfg": SceneEntityCfg("robot", joint_names="arm_.*_joint")},
-            noise=Unoise(n_min=-0.01, n_max=0.01),  # ruido de encoder, rad
+            noise=Unoise(n_min=-0.01, n_max=0.01),  # encoder noise, rad
         )
         arm_joint_vel = ObsTerm(
             func=mdp.joint_vel_rel,
@@ -159,8 +150,8 @@ class KairosObservationsCfg:
             noise=Unoise(n_min=-0.1, n_max=0.1),  # rad/s
         )
  
-        # --- Efector final (bandeja): pose y "equilibrio" (tarea 2 y 3) ---
-        # Posición y orientación por separado para poder darles un ruido de escala distinta.
+        # --- End effector (tray): pose and "balance" (tasks 2 and 3) ---
+        # Position and orientation separately so they can receive noise at different scales.
         ee_position_b = ObsTerm(
             func=mdp.ee_position_b,
             params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},
@@ -171,17 +162,15 @@ class KairosObservationsCfg:
             params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},
             noise=Unoise(n_min=-0.01, n_max=0.01),
         )
-        # Gravedad proyectada en el frame de la bandeja: señal directa de cuánto se ha
-        # desviado de la horizontal (roll/pitch), clave para la tarea de equilibrio.
+        # Gravity projected into the tray frame: direct signal of how far it has deviated from
+        # horizontal (roll/pitch), key for the balance task.
         ee_projected_gravity = ObsTerm(
             func=mdp.body_projected_gravity_b,
             params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},
             noise=Unoise(n_min=-0.05, n_max=0.05),
         )
  
-        # --- Última acción ---
-        # Sin ruido: no es una medida, es el valor exacto que la propia política emitió
-        # en el paso anterior (la política y el simulador lo conocen con precisión exacta).
+        # --- Last action ---
         last_action = ObsTerm(func=mdp.last_action)
  
         def __post_init__(self):
@@ -193,62 +182,34 @@ class KairosObservationsCfg:
  
     @configclass
     class CriticCfg(ObsGroup):
-        """Observaciones privilegiadas (sólo disponibles en simulación) para el crítico
-        en un esquema de entrenamiento actor-crítico asimétrico."""
+        """Observations for the critic in an asymmetric actor-critic training setup."""
  
-        # Estado base, igual que la política (el crítico necesita al menos la misma
-        # información que el actor, sin ruido de sensor)
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
         base_projected_gravity = ObsTerm(func=mdp.projected_gravity)
         velocity_commands = ObsTerm(func=mdp.generated_commands, params={"command_name": "base_velocity"})
-        tray_pose_command = ObsTerm(
-            func=mdp.command_position,
-            params={"command_name": "tray_pose"},
-            noise=Unoise(n_min=-0.01, n_max=0.01),
-        )
+        tray_pose_command = ObsTerm(func=mdp.command_position,params={"command_name": "tray_pose"},)
 
-        # --- Articulaciones del BRAZO únicamente (se excluyen ruedas y dedos de la pinza,
-        #     que no forman parte del espacio de acciones ni son relevantes para la política) ---
-        arm_joint_pos = ObsTerm(
-            func=mdp.joint_pos_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names="arm_.*_joint")},
-            noise=Unoise(n_min=-0.01, n_max=0.01),  # ruido de encoder, rad
-        )
-        arm_joint_vel = ObsTerm(
-            func=mdp.joint_vel_rel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names="arm_.*_joint")},
-            scale=0.05,
-            noise=Unoise(n_min=-0.1, n_max=0.1),  # rad/s
-        )
+        arm_joint_pos = ObsTerm(func=mdp.joint_pos_rel,params={"asset_cfg": SceneEntityCfg("robot", joint_names="arm_.*_joint")},)
+        arm_joint_vel = ObsTerm(func=mdp.joint_vel_rel,params={"asset_cfg": SceneEntityCfg("robot", joint_names="arm_.*_joint")},scale=0.05,)
 
-        ee_pose_b = ObsTerm(
-            func=mdp.ee_pose_b,
-            params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},
-        )
-        ee_projected_gravity = ObsTerm(
-            func=mdp.body_projected_gravity_b,
-            params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},
-        )
+        ee_projected_gravity = ObsTerm(func=mdp.body_projected_gravity_b,params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},)
+
+        last_action = ObsTerm(func=mdp.last_action)
  
-        # --- Información privilegiada propiamente dicha ---
-        # Masa de la carga acoplada al efector final (variable entre episodios, ver eventos).
-        # Escalado por el rango de randomización (0-1 kg) para que quede ~[0, 1], en línea
-        # con el resto de observaciones.
-        tray_payload_mass = ObsTerm(
-            func=mdp.body_mass_relative,
-            params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},
-            scale=1.0,
-        )
-        # Desviación de masa de la base (domain randomization en el chasis, rango -5..15 kg).
-        # Sin escalar, esta observación tomaría valores ~15x más grandes que el resto del
-        # vector de observación; la escalamos por 1/15 para llevarla a un rango similar.
+        # --- Privileged information ---
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+
+        ee_pose_b = ObsTerm(func=mdp.ee_pose_b,params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},)
+        
+        # Mass of the payload attached to the end effector (varies between episodes, see events).
+        tray_payload_mass = ObsTerm(func=mdp.body_mass_relative,params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},)
+        # Base mass deviation (domain randomization on the chassis, range -5..15 kg).
         base_mass_offset = ObsTerm(
             func=mdp.body_mass_relative,
             params={"asset_cfg": SceneEntityCfg("robot", body_names="base_link")},
             scale=1.0 / 15.0,
         )
-        # Velocidad lineal/angular real de la bandeja (no medible con precisión en el robot real)
+        # Real linear/angular tray velocity (not measurable with precision on the real robot)
         ee_velocity = ObsTerm(
             func=mdp.ee_velocity_w,
             params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},
@@ -260,10 +221,10 @@ class KairosObservationsCfg:
  
     critic: CriticCfg = CriticCfg()
 
-# 4. Configuración de Recompensas (Reward Function)
+# 4. Reward configuration (Reward Function)
 @configclass
 class KairosRewardsCfg:
-    # Penalizar movimientos bruscos del brazo
+    # Penalize abrupt arm movements
     action_rate_penalty = RewTerm(
         func=mdp.action_rate_l2, weight=-0.01
     )
@@ -288,42 +249,53 @@ class KairosRewardsCfg:
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="arm_.*_joint")},
     )
 
-    # Seguimiento de velocidad de la base
+    # Base velocity tracking
     track_lin_vel_xy = RewTerm(
         func=mdp.track_lin_vel_xy_yaw_frame_exp,weight=1.0,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
     track_ang_vel_z = RewTerm(
-        func=mdp.track_ang_vel_z_exp, weight=0.5, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
+        func=mdp.track_ang_vel_z_exp, weight=1.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     )
 
-    # Posicionamiento relativo del efector final (bandeja)
+    # Relative positioning of the end effector (tray)
+    # ee_position_tracking = RewTerm(
+    #     func=mdp.ee_position_tracking_exp,
+    #     weight=1.5,
+    #     params={
+    #         "command_name": "tray_pose",
+    #         "std": 0.2,
+    #         "asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link"),
+    #     },
+    # )
+
     ee_position_tracking = RewTerm(
-        func=mdp.ee_position_tracking_exp,
+        func=mdp.ee_position_tracking_exp_bubble,
         weight=1.5,
         params={
             "command_name": "tray_pose",
             "std": 0.2,
+            "tolerance": 0.05, # Radio de la burbuja en metros
             "asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link"),
         },
     )
 
-    # Estabilización global de la orientación (equilibrio de bandeja)
+    # Global orientation stabilization (tray balance)
     ee_flat_orientation = RewTerm(
         func=mdp.ee_flat_orientation_l2,
-        weight=-2.0,
-        params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},
+        weight=-5.0,
+        params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link"),"up_axis": (0.0, 1.0, 0.0)},
     )
-    ee_stability = RewTerm(
+    ee_velocity = RewTerm(
         func=mdp.ee_velocity_l2,
         weight=-0.05,
         params={"asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link")},
     )
     
-# 5. Configuración de Terminaciones (Cuándo acaba el episodio)
+# 5. Termination configuration (When the episode ends)
 @configclass
 class KairosTerminationsCfg:
-    # Terminar por tiempo (timeout)
+    # End by time (timeout)
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
 
     # 2. Arm impact: Terminates if the UR5e arm hits the floor, pyramids, or itself.
@@ -342,18 +314,18 @@ class KairosTerminationsCfg:
         func=mdp.bad_orientation,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
-            "limit_angle": math.pi / 3, # ~60 degrees tilt limit
+            "limit_angle": 60*math.pi / 180, # ~60 degrees tilt limit
         },
     )
 
-    # 4. Tray overturned: termina si la bandeja se inclina más de ~35 grados respecto
-    #    a la horizontal (equivalente a `vehicle_overturned` pero para el efector final).
+    # 4. Tray overturned: terminates if the tray tilts more than ~30 degrees relative
+    #    to horizontal (equivalent to `vehicle_overturned` but for the end effector).
     tray_overturned = DoneTerm(
         func=mdp.ee_bad_orientation,
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link"),
-            "limit_angle": math.pi / 5,  # ~36 grados
-            "up_axis": (0.0, 1.0, 0.0),  # ver comentario en ee_flat_orientation
+            "limit_angle": 30*math.pi / 180,  # ~30 degrees
+            "up_axis": (0.0, 1.0, 0.0),  # see comment in ee_flat_orientation
         },
     )
 
@@ -378,19 +350,19 @@ class CommandsCfg:
 
     tray_pose = mdp.UniformLevelPoseCommandCfg(
         asset_name="robot",
-        body_name="rg6_tcp_link",  # El eslabón que sostiene la bandeja
-        resampling_time_range=(5.0, 5.0),  # Cambiar la posición objetivo cada 5s
+        body_name="rg6_tcp_link",  # The link that holds the tray
+        resampling_time_range=(5.0, 5.0),  # Change the target position every 5 s
         debug_vis=False,
         ranges=mdp.UniformLevelPoseCommandCfg.Ranges(
-            pos_x=(0.0, 0.0),   # placeholder, se recalcula en el evento de arranque
+            pos_x=(0.0, 0.0),   # placeholder, recalculated in the startup event
             pos_y=(0.0, 0.0),
             pos_z=(0.0, 0.0),
-            roll=(0.0, 0.0),     # Forzamos que el objetivo siempre sea plano (bandeja recta)
+            roll=(0.0, 0.0),     # Force the target to remain flat (tray aligned)
             pitch=(0.0, 0.0),
             yaw=(0.0, 0.0),
         ),
         limit_ranges=mdp.UniformLevelPoseCommandCfg.Ranges(
-            pos_x=(0.0, 0.0),   # placeholder, se recalcula en el evento de arranque
+            pos_x=(0.0, 0.0),   # placeholder, recalculated in the startup event
             pos_y=(0.0, 0.0),
             pos_z=(0.0, 0.0),
             roll=(0.0, 0.0),
@@ -399,7 +371,7 @@ class CommandsCfg:
         ),
     )
 
-# 6. Configuración de Eventos (Domain Randomization y Resets)
+# 6. Event configuration (Domain Randomization and Resets)
 @configclass
 class KairosEventsCfg:
     # reset
@@ -430,8 +402,10 @@ class KairosEventsCfg:
         params={
             "command_name": "tray_pose",
             "asset_cfg": SceneEntityCfg("robot", body_names="rg6_tcp_link"),
-            "range_offsets": ((0.0, 0.10), (-0.10, 0.10), (-0.10, 0.10)),
-            "limit_offsets": ((0.0, 0.60), (-0.35, 0.35), (-0.30, 0.30)),
+            "range_offsets": ((0.0, 0.15), (-0.10, 0.10), (-0.10, 0.10)),#TODO
+            "limit_offsets": ((0.0, 0.30), (-0.25, 0.25), (-0.20, 0.20)),#TODO
+            #"range_offsets": ((0.0, 0.0), (-0.00, 0.00), (-0.00, 0.00)),
+            #"limit_offsets": ((0.0, 0.0), (-0.0, 0.0), (-0.00, 0.0)),
         },
     )
 
@@ -455,7 +429,7 @@ class KairosEventsCfg:
             "mass_distribution_params": (0.0, 1.0), 
             "operation": "add",
         },
-    )
+    )#TODO
 
     # interval
     push_robot_base = EventTerm(
@@ -471,27 +445,28 @@ class KairosEventsCfg:
 class KairosCurriculumCfg:
     """Curriculum terms for terrain advancement."""
     
-    terrain_advancement = CurrTerm(
-        func=mdp.terrain_distance_curriculum,
-        params={
-            "distance_threshold": 2.0, 
-            "asset_cfg": SceneEntityCfg("robot"),
-        },
-    )
+    # terrain_advancement = CurrTerm(
+    #     func=mdp.terrain_distance_curriculum,
+    #     params={
+    #         "distance_threshold": 2.0, 
+    #         "asset_cfg": SceneEntityCfg("robot"),
+    #     },
+    # )
+    terrain_advancement = CurrTerm(func=mdp.terrain_curriculum,)
 
-    # Expande el rango de velocidad lineal de la base según el desempeño de seguimiento
+    # Expand the base linear velocity command range according to tracking performance
     lin_vel_expansion = CurrTerm(
         func=mdp.lin_vel_cmd_levels,
         params={"reward_term_name": "track_lin_vel_xy"},
     )
     
-    # Expande el rango de velocidad angular de la base según el desempeño de seguimiento
+    # Expand the base angular velocity command range according to tracking performance
     ang_vel_expansion = CurrTerm(
         func=mdp.ang_vel_cmd_levels,
         params={"reward_term_name": "track_ang_vel_z"},
     )
 
-    # Expande el rango de posiciones objetivo de la bandeja según el desempeño de tracking
+    # Expand the tray target position range according to tracking performance
     ee_target_expansion = CurrTerm(
         func=mdp.ee_target_range_curriculum,
         params={
@@ -499,11 +474,11 @@ class KairosCurriculumCfg:
             "reward_term_name": "ee_position_tracking",
             "axis_deltas": {"pos_x": (0.0, 0.05), "pos_y": (-0.05, 0.05), "pos_z": (-0.05, 0.05)},
         },
-    ) 
+    )# TODO
 
 
 # ==============================================================================
-# CONFIGURACIÓN PRINCIPAL DEL ENTORNO
+# MAIN ENVIRONMENT CONFIGURATION
 # ==============================================================================
 @configclass
 class KairosEnvCfg(ManagerBasedRLEnvCfg):
@@ -519,23 +494,37 @@ class KairosEnvCfg(ManagerBasedRLEnvCfg):
 
     def __post_init__(self):
         """Post initialization."""
-        # Parámetros del episodio
-        self.episode_length_s = 20.0 # Duración en segundos
+        # Episode parameters
+        self.episode_length_s = 20.0 # Duration in seconds
         
-        # Configuración del motor de físicas
-        self.sim.dt = 1.0 / 60.0 # Frecuencia de física
-        self.decimation = 2 # Frecuencia de control de la red neuronal
+        # Physics engine configuration
+        self.sim.dt = 1.0 / 60.0 # Physics frequency
+        self.decimation = 2 # Neural control frequency
 
-        # CONFIGURACIÓN DE LA CÁMARA
-        self.viewer.eye = (-35.5, -35.5, 5.0)   # Posición de la cámara (X, Y, Z)
-        self.viewer.lookat = (-20.0, -20.0, 1.0) # A dónde mira la cámara (hacia el robot)
-
+        # CAMERA CONFIGURATION
+        #self.viewer.eye = (-35.5, -35.5, 5.0)   # Camera position (X, Y, Z)
+        #self.viewer.lookat = (-20.0, -20.0, 1.0) # Where the camera looks (towards the robot)
+        self.viewer.eye = (48.0, 0.0, 6.0)
+        self.viewer.lookat = (-10.0, -5.0, -5.0)
 
 @configclass
 class RobotPlayEnvCfg(KairosEnvCfg):
     def __post_init__(self):
         super().__post_init__()
-        self.scene.num_envs = 32
-        self.scene.terrain.terrain_generator.num_rows = 2
-        self.scene.terrain.terrain_generator.num_cols = 10
+        
+        self.scene.num_envs = 30
         self.commands.base_velocity.ranges = self.commands.base_velocity.limit_ranges
+
+        self.scene.terrain.terrain_generator.curriculum = False
+        
+        self.scene.terrain.terrain_generator.sub_terrains["pyramid_sloped"].slope_range = (0.24, 0.24)
+        self.scene.terrain.terrain_generator.sub_terrains["inverted_pyramid_sloped"].slope_range = (0.24, 0.24)
+        
+        self.scene.terrain.terrain_generator.num_rows = 5
+        self.scene.terrain.terrain_generator.num_cols = 6 
+        self.scene.terrain.max_init_terrain_level = None
+        
+        if hasattr(self.curriculum, "terrain_levels"):
+            self.curriculum.terrain_levels = None
+        self.viewer.eye = (10.0, 0.0, 5.0)
+        self.viewer.lookat = (-4.0, 1.0, 0.0)
