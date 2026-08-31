@@ -29,16 +29,12 @@ import pathlib
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _PROJECT_ROOT)
 
-import tasks  # noqa: F401 – registers custom Gym tasks
-
-_UNITREE_LAB_ROOT = "/mnt/beegfs/home/jesuseliseo.blanco/my_projects/"  # TODO: set your path
-_UNITREE_SCRIPTS = os.path.join(_UNITREE_LAB_ROOT, "unitree_rl_lab/scripts/rsl_rl")
-sys.path.append(_UNITREE_SCRIPTS) 
+import tasks  # noqa: F401 – registers custom Gym tasks 
 
 import argparse
 import argcomplete
 from isaaclab.app import AppLauncher
-import cli_args  # isort: skip  (lives in UNITREE_SCRIPTS) # TODO quitar dependencia de unitree
+from utils import cli_args
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 2. ARGUMENT PARSING
@@ -143,7 +139,7 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
-from unitree_rl_lab.utils.export_deploy_cfg import export_deploy_cfg # TODO quitar dependencia de unitree
+from utils.export_deploy_cfg import export_deploy_cfg
 
 # D-PPO cfg only imported when needed to avoid ConfigStore conflicts on PPO/Distillation runs
 if _MODE == "dppo":
@@ -307,11 +303,11 @@ def _run_ppo(env_cfg, agent_cfg):
         print(f"[INFO] Resuming from checkpoint: {resume_path}")
         runner.load(resume_path)
 
-    #_dump_artifacts(log_dir, env_cfg, agent_cfg, env) # TODO da error con exportar de unitree arreglar
+    _dump_artifacts(log_dir, env_cfg, agent_cfg, env) # TODO da error con exportar de unitree arreglar
 
     try:
         runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
-        _report_optuna_reward(env)
+    
     finally:
         env.close()
         simulation_app.close()
@@ -379,21 +375,6 @@ def _run_dppo(env_cfg, agent_cfg):
     finally:
         env.close()
         simulation_app.close()
-
-
-def _report_optuna_reward(env):
-    """Extract and print the final reward sum for Optuna integration (PPO only)."""
-    final_reward = 0.0
-    if hasattr(env.unwrapped, "extras") and "log" in env.unwrapped.extras:
-        components = [
-            v.item()
-            for k, v in env.unwrapped.extras["log"].items()
-            if "Episode_Reward/" in k
-        ]
-        if components:
-            final_reward = sum(components)
-    print(f"OPTUNA_FINAL_REWARD: {final_reward}")
-    sys.stdout.flush()
 
 
 # ──────────────────────────────────────────────────────────────────────────────

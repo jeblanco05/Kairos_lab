@@ -1,139 +1,264 @@
-import sys
+"""
+Interactive play script for RSL-RL policies in Isaac Lab.
+
+Loads a trained checkpoint (PPO, Distillation or D-PPO), exports it to
+JIT and ONNX, and runs the policy in the simulator indefinitely (or for
+--video_length steps when --video is active).
+
+Runner type is resolved automatically from agent_cfg.class_name:
+  OnPolicyRunner | DistillationRunner | DPPORunner
+
+Example usage
+-------------
+python play.py --task G1-RlSl-PPO-v1 --load_run <run_dir> --checkpoint -1
+python play.py --task G1-RlSl-DPPO-v1 --load_run /abs/path/to/run --checkpoint -1 --video
+"""
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 1. EARLY IMPORTS & PATH SETUP
+# ──────────────────────────────────────────────────────────────────────────────
 import os
+import sys
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _PROJECT_ROOT)
+
+import tasks  # noqa: F401 – registers custom Gym tasks
+
 import argparse
+import argcomplete
 from isaaclab.app import AppLauncher
+from utils import cli_args
 
-# 1. Configuración de argumentos (Añadimos flags para video)
-parser = argparse.ArgumentParser(description="Visualizar y grabar el entorno del Kairos+.")
-parser.add_argument("--record_video", action="store_true", default=False, help="Grabar video de la simulación en .mp4")
+# ──────────────────────────────────────────────────────────────────────────────
+# 2. ARGUMENT PARSING
+# ──────────────────────────────────────────────────────────────────────────────
+parser = argparse.ArgumentParser(
+    description="Play a trained RSL-RL policy interactively.",
+    formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+)
+parser.add_argument("--task", type=str, required=True, help="Gym task id, e.g. G1-RlSl-PPO-v1")
+parser.add_argument("--num_envs", type=int, default=None, help="Number of parallel environments.")
+parser.add_argument("--video", action="store_true", default=False, help="Record a single video and exit.")
+parser.add_argument("--video_length", type=int, default=200, help="Video length in steps.")
+parser.add_argument("--disable_fabric", action="store_true", default=False, help="Use USD I/O instead of Fabric.")
+parser.add_argument("--use_pretrained_checkpoint", action="store_true", help="Load a published Nucleus checkpoint.")
+parser.add_argument("--real_time", action="store_true", default=False, help="Throttle simulation to real-time.")
+
+cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
-args_cli = parser.parse_args()
+argcomplete.autocomplete(parser)
 
-# Si queremos grabar video en un servidor sin pantalla, necesitamos forzar las cámaras virtuales
-if args_cli.record_video:
+args_cli, hydra_args = parser.parse_known_args()
+
+if args_cli.video:
     args_cli.enable_cameras = True
 
+# Pass only Hydra args so its ConfigStore stays clean
+sys.argv = [sys.argv[0]] + hydra_args
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 3. LAUNCH ISAAC SIM
+# ──────────────────────────────────────────────────────────────────────────────
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(current_dir)
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
+# ──────────────────────────────────────────────────────────────────────────────
+# 4. REST OF IMPORTS (after Isaac Sim is up)
+# ──────────────────────────────────────────────────────────────────────────────
+import time
 import torch
 import gymnasium as gym
-from gymnasium.wrappers import RecordVideo
+from importlib.metadata import version as lib_version
 
-from isaaclab.envs import ManagerBasedRLEnv
-# Importamos la configuración que creamos en el paso anterior
-from tasks.kairosplus_env_cfg import KairosEnvCfg
-from tasks.mdp.events import custom_reset_kairos
+import isaaclab_tasks  # noqa: F401
+from isaaclab.envs import DirectMARLEnv, multi_agent_to_single_agent
+from isaaclab.utils.assets import retrieve_file_path
+from isaaclab.utils.dict import print_dict
+
+from rsl_rl.runners import OnPolicyRunner, DistillationRunner, DPPORunner
+
+try:
+    from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
+except ImportError:
+    def get_published_pretrained_checkpoint(*args, **kwargs):
+        return None
+
+from isaaclab_rl.rsl_rl import (
+    RslRlOnPolicyRunnerCfg,
+    RslRlVecEnvWrapper,
+    export_policy_as_jit,
+    export_policy_as_onnx,
+)
+from isaaclab_tasks.utils import get_checkpoint_path
+from utils.parser_cfg import parse_env_cfg
+from utils.export_deploy_cfg import export_deploy_cfg
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 5. HELPERS
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _resolve_checkpoint(agent_cfg, args_cli) -> str:
+    """Resolve the full path to the model checkpoint."""
+    log_root = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
+    override_run_dir = False
+
+    if args_cli.load_run:
+        if os.path.isabs(args_cli.load_run) and os.path.isdir(args_cli.load_run):
+            log_root = args_cli.load_run
+            override_run_dir = True
+        else:
+            candidate = os.path.abspath(os.path.join("logs", args_cli.load_run))
+            if os.path.isdir(candidate):
+                log_root = candidate
+                override_run_dir = True
+
+    log_root = os.path.abspath(log_root)
+    print(f"[INFO] Loading experiment from: {log_root}")
+
+    if args_cli.use_pretrained_checkpoint:
+        path = get_published_pretrained_checkpoint("rsl_rl", args_cli.task)
+        if not path:
+            raise RuntimeError("[ERROR] No pre-trained checkpoint available for this task.")
+        return path
+
+    if args_cli.checkpoint:
+        if args_cli.checkpoint.strip() == "-1":
+            if override_run_dir:
+                pts = sorted(
+                    [f for f in os.listdir(log_root) if f.startswith("model_") and f.endswith(".pt")],
+                    key=lambda m: int(m.split("_")[1].split(".")[0]),
+                )
+                if not pts:
+                    raise FileNotFoundError(f"[ERROR] No model_*.pt checkpoints in: {log_root}")
+                return os.path.join(log_root, pts[-1])
+            elif agent_cfg.load_run and os.path.isabs(agent_cfg.load_run):
+                pattern = agent_cfg.load_checkpoint if agent_cfg.load_checkpoint != "-1" else ".*"
+                return get_checkpoint_path(agent_cfg.load_run, ".*", pattern)
+            else:
+                pattern = agent_cfg.load_checkpoint if agent_cfg.load_checkpoint != "-1" else ".*"
+                return get_checkpoint_path(log_root, agent_cfg.load_run or ".*", pattern)
+        else:
+            return retrieve_file_path(args_cli.checkpoint)
+
+    return get_checkpoint_path(log_root, agent_cfg.load_run, agent_cfg.load_checkpoint)
+
+
+def _build_runner(agent_cfg, env):
+    """Instantiate the correct RSL-RL runner from agent_cfg.class_name."""
+    class_name = agent_cfg.class_name
+    kwargs = dict(env=env, train_cfg=agent_cfg.to_dict(), log_dir=None, device=agent_cfg.device)
+    runners = {
+        "OnPolicyRunner":    OnPolicyRunner,
+        "DistillationRunner": DistillationRunner,
+        "DPPORunner":        DPPORunner,
+    }
+    if class_name not in runners:
+        raise ValueError(f"[ERROR] Unsupported runner class: '{class_name}'. "
+                         f"Valid options: {list(runners)}")
+    print(f"[INFO] Instantiating {class_name}.")
+    return runners[class_name](**kwargs)
+
+
+def _export_policy(runner, resume_path: str) -> None:
+    """Export the policy network to JIT and ONNX formats."""
+    try:
+        policy_nn = runner.alg.policy
+    except AttributeError:
+        policy_nn = runner.alg.actor_critic
+
+    normalizer = (
+        getattr(policy_nn, "actor_obs_normalizer", None)
+        or getattr(policy_nn, "student_obs_normalizer", None)
+    )
+    export_dir = os.path.join(os.path.dirname(resume_path), "exported")
+    export_policy_as_jit(policy_nn, normalizer=normalizer, path=export_dir, filename="policy.pt")
+    export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_dir, filename="policy.onnx")
+    print(f"[INFO] Policy exported to: {export_dir}")
+
+
+def _get_initial_obs(env):
+    """Get the initial observation, handling rsl-rl-lib 2.3.x API."""
+    obs = env.get_observations()
+    if lib_version("rsl-rl-lib").startswith("2.3."):
+        obs, _ = env.get_observations()
+    return obs
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 6. MAIN
+# ──────────────────────────────────────────────────────────────────────────────
+
 def main():
-    # 2. Cargar la configuración
-    env_cfg = KairosEnvCfg()
-    
-    # Para probar visualmente, solo necesitamos 1 robot, no 4000.
-    env_cfg.scene.num_envs = 15
-    
-    # Configuramos dónde se sitúa la cámara virtual que nos grabará el video
-    env_cfg.viewer.eye = (-35.5, -35.5, 5.0)   # Posición de la cámara (X, Y, Z)
-    env_cfg.viewer.lookat = (-20.0, -20.0, 1.0) # A dónde mira la cámara (hacia el robot)
-    
-    # 3. Crear el entorno (Activamos rgb_array para poder renderizar video)
-    render_mode = "rgb_array" if args_cli.record_video else None
-    env = ManagerBasedRLEnv(cfg=env_cfg, render_mode=render_mode)
-    
-    # 4. Configurar el grabador de vídeo
-    if args_cli.record_video:
-        video_folder = os.path.join(os.getcwd(), "videos_kairos")
-        print(f"\n[INFO] Grabando video en la carpeta: {video_folder}\n")
-        
-        env = RecordVideo(
-            env, 
-            video_folder=video_folder, 
-            step_trigger=lambda step: step == 0, # Grabar desde el frame 0
-            video_length=400 # Duración: 200 pasos (a 50Hz = 4 segundos de video)
-        )
+    # ── Config ────────────────────────────────────────────────────────────────
+    env_cfg = parse_env_cfg(
+        args_cli.task,
+        device=args_cli.device,
+        num_envs=args_cli.num_envs,
+        use_fabric=not args_cli.disable_fabric,
+        entry_point_key="play_env_cfg_entry_point",
+    )
+    agent_cfg: RslRlOnPolicyRunnerCfg = cli_args.parse_rsl_rl_cfg(args_cli.task, args_cli)
 
-    # 5. Bucle de Simulación
-    #print(env.scene.env_origins)
-    obs, info = env.reset()
-    print("[INFO] Simulación iniciada...")
+    # ── Checkpoint ────────────────────────────────────────────────────────────
+    resume_path = _resolve_checkpoint(agent_cfg, args_cli)
+    print(f"[INFO] Checkpoint resolved: {resume_path}")
+    log_dir = os.path.dirname(resume_path)
 
-    # Accediendo a los datos cinemáticos del robot en tiempo de ejecución
-    robot_entity = env.scene["robot"]
-    tcp_link_idx = robot_entity.find_bodies("rg6_tcp_link")[0][0]
+    # ── Environment ───────────────────────────────────────────────────────────
+    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
 
-    # Posición del efector final respecto al mundo
-    tcp_pos_w = robot_entity.data.body_pos_w[:, tcp_link_idx, :]
-    # Posición de la base del robot respecto al mundo
-    root_pos_w = robot_entity.data.root_pos_w[:, :]
+    if isinstance(env.unwrapped, DirectMARLEnv):
+        env = multi_agent_to_single_agent(env)
 
-    # La posición relativa del efector respecto a la base:
-    tcp_pos_local = tcp_pos_w - root_pos_w
-    print(f"Posición inicial del TCP relativa a la base: {tcp_pos_local[0]}")
+    if args_cli.video:
+        video_dir = os.path.join(log_dir, "videos", "play")
+        os.makedirs(video_dir, exist_ok=True)
+        video_kwargs = {
+            "video_folder": video_dir,
+            "step_trigger": lambda step: step == 0,
+            "video_length": args_cli.video_length,
+            "disable_logger": True,
+        }
+        print(f"[INFO] Recording video → {video_dir}")
+        print_dict(video_kwargs, nesting=4)
+        env = gym.wrappers.RecordVideo(env, **video_kwargs)
 
-    from isaaclab.managers import SceneEntityCfg
-    from tasks.mdp import observations as mdp_obs
+    env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
 
-    asset_cfg = SceneEntityCfg("robot", body_names="rg6_tcp_link")
-    asset_cfg.resolve(env.scene)  # <- esto es lo que faltaba
+    # ── Policy ────────────────────────────────────────────────────────────────
+    runner = _build_runner(agent_cfg, env)
+    runner.load(resume_path)
+    policy = runner.get_inference_policy(device=env.unwrapped.device)
+    export_deploy_cfg(env.unwrapped, agent_cfg.obs_groups, log_dir)
+    _export_policy(runner, resume_path)
 
-    pos_b = mdp_obs.ee_position_b(env, asset_cfg=asset_cfg)
-    print(pos_b[0])
+    # ── Simulation loop ───────────────────────────────────────────────────────
+    obs = _get_initial_obs(env)
+    dt = env.unwrapped.step_dt
+    timestep = 0
 
-    arm_base_pos_b = mdp_obs.ee_position_b(env, asset_cfg=SceneEntityCfg("robot", body_names="arm_base_link"))
-    print("arm_base_link relativo a base_link:", arm_base_pos_b[0])
-    
-    # Vamos a correr 200 pasos de simulación
-    pos = 0.0
-    for i in range(600):
-        # if i%100 == 0:
-        #     print(f"[INFO] Teletransportando al robot en el frame {i}...")
-        #     # Creamos un tensor que apunta a nuestro único robot (índice 0)
-        #     #ids_robot = torch.tensor([0], device=env.device)
-        #     ids_robot = torch.arange(env.num_envs, dtype=torch.long, device=env.device)
-        #     # Llamamos a tu función para que lo mueva, ¡sin reiniciar el entorno entero!
-        #     custom_reset_kairos(env.unwrapped, ids_robot)
-        #     pos = 0.0
-        #env.action_space.shape[1] será 9 (3 para la base + 6 para el brazo)
-        # Inicializamos todo a 0.0 (El robot se quedará completamente quieto)
-        acciones = torch.zeros((env.num_envs, env.action_space.shape[1]), device=env.device)
-        
-        # --- ¡JUEGA CON LAS ACCIONES AQUÍ! ---
-        # Si quieres probar a mover la base hacia adelante a 0.5 m/s, descomenta esta línea:
-        acciones[:, 0] = 1.5
+    try:
+        while simulation_app.is_running():
+            start_time = time.time()
+            with torch.inference_mode():
+                actions = policy(obs)
+                obs, _, _, _ = env.step(actions)
 
-        # Si quieres probar a mover la base hacia el lado a 0.5 m/s, descomenta esta:
-        #acciones[:, 1] = 0.5
-        
-        # Si quieres probar a girar la base sobre su eje (Yaw), descomenta esta:
-        #acciones[:, 2] = 0.5
-        
-        # Si quieres mover la primera articulación del brazo (Hombro Pan), descomenta esta:
-        #pos += 0.05
-        # acciones[:, 3] += pos
-        # acciones[:, 4] += -pos
-        # acciones[:, 5] += -pos
-        # acciones[:, 6] += -pos
-        # acciones[:, 7] += -pos
-        #acciones[:, 8] += -pos
-        #print("Accion: ", i)
-        # Enviamos la acción al simulador
-        obs, rewards, terminated, truncated, info = env.step(acciones)
+            if args_cli.video:
+                timestep += 1
+                if timestep == args_cli.video_length:
+                    print("[INFO] Video length reached — exiting.")
+                    break
 
-        dones = terminated | truncated
-        if dones.any():
-            print("[INFO] El entorno detectó un choque y se ha reiniciado. Limpiando acciones...")
-            pos = 0.0
-    
-    pos_b = mdp_obs.ee_position_b(env, asset_cfg=SceneEntityCfg("robot", body_names="front_laser_base_link"))
-    print("front_laser_base_link relativo a base_link:", pos_b[0])
-        
-    print("[INFO] Simulación terminada.")
-    env.close()
+            sleep_time = dt - (time.time() - start_time)
+            if args_cli.real_time and sleep_time > 0:
+                time.sleep(sleep_time)
+
+    finally:
+        env.close()
+        simulation_app.close()
+
 
 if __name__ == "__main__":
     main()
-    simulation_app.close()
