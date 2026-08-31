@@ -19,7 +19,7 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from isaaclab.envs.common import ViewerCfg
 
 from robot_cfg.robotcfg import KAIROS_CFG, KAIROS_CFG_RG6
-from controllers.local_base_action import LocalBaseVelocityActionCfg, MecanumChassisVelocityActionCfg
+from controllers.local_base_action import MecanumChassisVelocityActionCfg
 from tasks import mdp 
 
 # 1. Terrain configuration
