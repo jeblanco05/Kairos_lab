@@ -1,11 +1,11 @@
-"""Funciones de recompensa personalizadas para la tarea de Whole-Body Control del Kairos+.
+"""Custom reward functions for the Kairos+ whole-body control task.
 
-IsaacLab trae recompensas genéricas de tracking de velocidad y de `flat_orientation_l2`
-para el root del robot, pero no hay nada preparado de fábrica para:
-  1) seguir una pose objetivo de un *cuerpo* concreto que no sea el root (la bandeja), y
-  2) penalizar la inclinación de ESE cuerpo respecto a la gravedad (equilibrio de bandeja).
+IsaacLab provides generic velocity tracking and `flat_orientation_l2` rewards for the robot root,
+but there is nothing ready-made for:
+  1) tracking a target pose for a specific body other than the root (the tray), and
+  2) penalizing the tilt of that body with respect to gravity (tray balance).
 
-Ambas funciones reutilizan la cinemática ya calculada en `tasks.mdp.observations`.
+Both functions reuse the kinematics already computed in `tasks.mdp.observations`.
 """
 
 from __future__ import annotations
@@ -29,9 +29,9 @@ def ee_position_tracking_exp(
     std: float,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
 ) -> torch.Tensor:
-    """Recompensa exponencial por seguir la posición objetivo de la bandeja (comando `tray_pose`).
+    """Exponential reward for tracking the tray target position (command `tray_pose`).
 
-    Sigue el mismo patrón que `track_lin_vel_xy_yaw_frame_exp`: exp(-error_cuadratico / std^2).
+    It follows the same pattern as `track_lin_vel_xy_yaw_frame_exp`: exp(-squared_error / std^2).
     """
     asset: Articulation = env.scene[asset_cfg.name]
     ee_body_id = asset_cfg.body_ids[0]
@@ -46,24 +46,53 @@ def ee_position_tracking_exp(
     error = torch.sum(torch.square(des_pos_b - ee_pos_b), dim=1)
     return torch.exp(-error / std**2)
 
+def ee_position_tracking_exp_bubble(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    std: float,
+    tolerance: float = 0.05,  # Burbuja de tolerancia (ej. 8 cm)
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
+) -> torch.Tensor:
+    """Exponential reward for tracking the tray target position with a deadzone bubble.
+    If the tray is within 'tolerance' meters of the target, it receives maximum reward.
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    ee_body_id = asset_cfg.body_ids[0]
+
+    command = env.command_manager.get_command(command_name)
+    des_pos_b = command[:, :3]
+
+    ee_pos_b, _ = subtract_frame_transforms(
+        asset.data.root_pos_w, asset.data.root_quat_w, asset.data.body_pos_w[:, ee_body_id]
+    )
+
+    # 1. Calcular la distancia euclidiana lineal (L2 norm)
+    distance = torch.norm(des_pos_b - ee_pos_b, dim=1)
+    
+    # 2. Aplicar la burbuja: restamos la tolerancia y limitamos a 0.
+    # Si la distancia es menor que la tolerancia, el resultado es 0 (error nulo).
+    adjusted_distance = torch.clamp(distance - tolerance, min=0.0)
+    
+    # 3. Elevar al cuadrado el error ajustado para la función exponencial
+    error_sq = torch.square(adjusted_distance)
+    
+    return torch.exp(-error_sq / std**2)
+
 
 def ee_flat_orientation_l2(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
     up_axis: tuple[float, float, float] = (0.0, 0.0, 1.0),
 ) -> torch.Tensor:
-    """Penaliza (L2) la inclinación de la bandeja: distancia al cuadrado entre la gravedad
-    proyectada en el frame del efector final y `-up_axis` (el vector que debería salir si la
-    bandeja estuviera perfectamente nivelada). Vale 0 cuando está horizontal. Pensada para
-    usarse con peso NEGATIVO, igual que `flat_orientation_l2` para la base.
-
-    Ver la nota sobre `up_axis` en `observations.ee_bad_orientation`: es un eje del frame
-    LOCAL del cuerpo, fijo según el URDF/USD, no necesariamente Z.
+    """Penalizes (L2) the tilt of the tray: squared distance between the gravity vector projected
+    into the end-effector frame and `-up_axis` (the vector that should point out if the tray is
+    perfectly level). It is 0 when horizontal. Designed for use with a NEGATIVE weight,
+    similar to `flat_orientation_l2` for the base.
     """
     projected_gravity_b = body_projected_gravity_b(env, asset_cfg)
     up = torch.tensor(up_axis, device=projected_gravity_b.device, dtype=projected_gravity_b.dtype)
     up = up / torch.linalg.norm(up)
-    deviation = projected_gravity_b + up  # == 0 cuando está nivelado
+    deviation = projected_gravity_b + up  # == 0 when perfectly level
     return torch.sum(torch.square(deviation), dim=-1)
 
 
@@ -71,8 +100,8 @@ def ee_velocity_l2(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
 ) -> torch.Tensor:
-    """Penaliza la velocidad lineal + angular del efector final, para fomentar una bandeja
-    estable (sin oscilaciones), no sólo bien orientada en promedio. Peso NEGATIVO pequeño.
+    """Penalizes the linear + angular velocity of the end effector to encourage a stable tray
+    (without oscillations), not just a good average orientation. Small NEGATIVE weight.
     """
     asset: Articulation = env.scene[asset_cfg.name]
     body_id = asset_cfg.body_ids[0]
