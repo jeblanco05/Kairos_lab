@@ -4,7 +4,7 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, R
 @configclass
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
-    max_iterations = 15000
+    max_iterations = 10000
     save_interval = 1000
     experiment_name = "Kairos-PPO-v1"  # same as task name
     empirical_normalization = False
@@ -30,13 +30,13 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     )
 
 @configclass
-class G1LatentPPORunnerCfg(RslRlOnPolicyRunnerCfg):
+class LatentPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     """Runner para entrenar el teacher con arquitectura latente (Paso 1)."""
  
     num_steps_per_env = 24
-    max_iterations = 15000
+    max_iterations = 10000
     save_interval = 1000
-    experiment_name = "G1-RlSl-PPO-v2"
+    experiment_name = "Kairos-PPO-v2"
     empirical_normalization = False
     obs_groups = {
         "policy": ["obs_noised", "obs_priv"],
