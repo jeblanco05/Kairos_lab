@@ -1,9 +1,10 @@
-"""Funciones de observación personalizadas para la tarea de Whole-Body Control del Kairos+.
+"""Custom observation functions for the Kairos+ whole-body control task.
 
-Se añaden aquí porque IsaacLab, de forma nativa, sólo calcula `projected_gravity_b`
-y las poses relativas para el *root* del Articulation. Para este proyecto necesitamos
-lo mismo pero referido a un cuerpo arbitrario (el efector final / bandeja, `rg6_tcp_link`),
-así como observaciones privilegiadas (masa de la carga) que sólo tienen sentido en simulación.
+They are added here because IsaacLab only calculates `projected_gravity_b`
+and relative poses for the Articulation root by default. For this project, we need
+the same information but referenced to an arbitrary body (the end effector / tray,
+`rg6_tcp_link`), as well as privileged observations (payload mass) that only make
+sense in simulation.
 """
 
 from __future__ import annotations
@@ -19,12 +20,7 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 def command_position(env: ManagerBasedRLEnv, command_name: str) -> torch.Tensor:
-    """Sólo la parte de posición (3,) de un comando de pose (p. ej. `tray_pose`).
- 
-    Usar en vez de `mdpIL.generated_commands` cuando el resto del comando (orientación)
-    es constante -- por ejemplo si `roll=pitch=yaw=(0,0)`, la parte de orientación del
-    comando es siempre el mismo cuaternión identidad y no aporta información a la política.
-    """
+    """Only the position part (3,) of a pose command (e.g., `tray_pose`)."""
     command = env.command_manager.get_command(command_name)
     return command[:, :3]
 
@@ -32,11 +28,11 @@ def ee_pose_b(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
 ) -> torch.Tensor:
-    """Pose del efector final (bandeja) expresada en el frame de la base del robot.
+    """End-effector pose (tray) expressed in the robot base frame.
 
-    Devuelve un tensor (num_envs, 7) = [pos_x, pos_y, pos_z, quat_w, quat_x, quat_y, quat_z].
-    Es una magnitud calculable con la cinemática directa del robot, por lo que no se
-    considera privilegiada (también estaría disponible en el robot real).
+    Returns a tensor (num_envs, 7) = [pos_x, pos_y, pos_z, quat_w, quat_x, quat_y, quat_z].
+    This is a quantity that can be computed from the robot's kinematics, so it is not
+    considered privileged.
     """
     asset: Articulation = env.scene[asset_cfg.name]
     ee_body_id = asset_cfg.body_ids[0]
@@ -54,9 +50,9 @@ def ee_position_b(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
 ) -> torch.Tensor:
-    """Sólo la posición (3,) de `ee_pose_b`. Se separa de la orientación porque el ruido
-    de un sensor de posición (m) y el de una orientación (cuaternión, adimensional) tienen
-    escalas muy distintas, y `ObsTerm.noise` sólo admite un único rango por término."""
+    """Only the position (3,) of `ee_pose_b`. It is separated from the orientation because the noise
+    of a position sensor (m) and that of an orientation sensor (quaternion, dimensionless) have
+    very different scales, and `ObsTerm.noise` only accepts a single range per term."""
     asset: Articulation = env.scene[asset_cfg.name]
     ee_body_id = asset_cfg.body_ids[0]
     ee_pos_b, _ = subtract_frame_transforms(
@@ -69,7 +65,7 @@ def ee_orientation_b(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
 ) -> torch.Tensor:
-    """Sólo la orientación (cuaternión, 4) de `ee_pose_b`. Ver `ee_position_b`."""
+    """Only the orientation (quaternion, 4) of `ee_pose_b`. See `ee_position_b`."""
     asset: Articulation = env.scene[asset_cfg.name]
     ee_body_id = asset_cfg.body_ids[0]
     _, ee_quat_b = subtract_frame_transforms(
@@ -86,8 +82,9 @@ def ee_position_command_error_b(
     command_name: str,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
 ) -> torch.Tensor:
-    """Error de posición (comando - actual) entre el objetivo de la bandeja y el efector final,
-    ambos expresados en el frame de la base. Da al agente una señal directa del error a corregir.
+    """Position error (command - actual) between the tray target and the end effector,
+    both expressed in the robot base frame. This gives the agent a direct signal of the
+    correction error to minimize.
     """
     asset: Articulation = env.scene[asset_cfg.name]
     ee_body_id = asset_cfg.body_ids[0]
@@ -105,34 +102,28 @@ def body_projected_gravity_b(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
 ) -> torch.Tensor:
-    """Vector de gravedad proyectado en el frame de un cuerpo arbitrario del Articulation.
+    """Gravity vector projected into the local frame of an arbitrary Articulation body."""
 
-    Es el equivalente de `mdp.projected_gravity` (que sólo funciona para el root) pero
-    aplicado a la bandeja. Con orientación perfectamente horizontal (roll = pitch = 0
-    respecto a gravedad) el resultado es aprox. (0, 0, -1); cualquier inclinación de la
-    bandeja aparece como componentes x/y distintas de cero, que es justo la señal que la
-    política necesita para mantener el equilibrio.
-    """
     asset: Articulation = env.scene[asset_cfg.name]
     body_id = asset_cfg.body_ids[0]
 
     body_quat_w = asset.data.body_quat_w[:, body_id]
     return quat_apply_inverse(body_quat_w, asset.data.GRAVITY_VEC_W)
 
+
 def ee_tilt_angle(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
     up_axis: tuple[float, float, float] = (0.0, 0.0, 1.0),
 ) -> torch.Tensor:
-    """Ángulo (rad) entre el eje "arriba" local del cuerpo y la vertical del mundo.
+    """Angle (rad) between the local "up" axis of the body and the world vertical.
 
-    0 cuando está perfectamente nivelado, pi/2 cuando está de canto. Se apoya en
-    `body_projected_gravity_b`; ver la nota sobre `up_axis` en `ee_bad_orientation`.
+    0 when perfectly level, pi/2 when tilted sideways.
     """
     projected_gravity_b = body_projected_gravity_b(env, asset_cfg)
     up = torch.tensor(up_axis, device=projected_gravity_b.device, dtype=projected_gravity_b.dtype)
     up = up / torch.linalg.norm(up)
-    # Nivelado <=> proj_grav_b == -up  =>  cos(angulo) = -proj_grav_b . up
+    # Level = proj_grav_b == -up => cos(angle) = -proj_grav_b . up
     cos_angle = -torch.sum(projected_gravity_b * up, dim=-1)
     return torch.acos(cos_angle.clamp(-1.0, 1.0))
 
@@ -141,9 +132,9 @@ def body_mass(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
 ) -> torch.Tensor:
-    """Observación privilegiada: masa actual de un cuerpo rígido (p. ej. masa de la carga
-    acoplada al efector final). Sólo tiene sentido en simulación (grupo `critic`), ya que
-    el robot real no dispone de esta medida directa.
+    """Privileged observation: current mass of a rigid body (e.g., payload mass on the end effector).
+    It only makes sense in simulation (critic group), since the real robot does not have a direct
+    measurement for it.
     """
     asset: Articulation = env.scene[asset_cfg.name]
     masses = asset.root_physx_view.get_masses().to(env.device)  # (num_envs, num_bodies)
@@ -154,8 +145,8 @@ def body_mass_relative(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
 ) -> torch.Tensor:
-    """Igual que `body_mass`, pero como desviación respecto a la masa nominal (por defecto)
-    del cuerpo. Suele ser más informativa/fácil de normalizar para la red que la masa absoluta.
+    """Same as `body_mass`, but as a deviation from the nominal (default) body mass.
+    This is usually more informative/easier to normalize for the network than the absolute mass.
     """
     asset: Articulation = env.scene[asset_cfg.name]
     masses = asset.root_physx_view.get_masses().to(env.device)[:, asset_cfg.body_ids]
@@ -167,10 +158,10 @@ def ee_velocity_w(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names="rg6_tcp_link"),
 ) -> torch.Tensor:
-    """Observación privilegiada: velocidad lineal y angular (mundo) del efector final.
+    """Privileged observation: linear and angular velocity (world frame) of the end effector.
 
-    En el robot real no se dispone de un sensor directo en la muñeca/bandeja con esta
-    precisión, por lo que se trata como información privilegiada para el crítico.
+    The real robot does not have a direct sensor on the wrist/tray at this precision, so this is
+    treated as privileged information for the critic.
     """
     asset: Articulation = env.scene[asset_cfg.name]
     body_id = asset_cfg.body_ids[0]

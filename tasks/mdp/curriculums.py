@@ -8,10 +8,10 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 def terrain_distance_curriculum(
-    env, # Asumiendo ManagerBasedRLEnv
+    env, # Assuming ManagerBasedRLEnv
     env_ids: torch.Tensor,
     distance_threshold: float,
-    asset_cfg = None, # Puedes mantener tus tipos (SceneEntityCfg)
+    asset_cfg = None,
 ) -> torch.Tensor:
     """
     Evaluates the distance traveled by the robot from its initial origin.
@@ -27,23 +27,60 @@ def terrain_distance_curriculum(
     origin_pos = env.scene.env_origins[env_ids, :2]
     distance_traveled = torch.norm(current_pos - origin_pos, dim=1)
     
-    # 1. Creamos las MÁSCARAS BOOLEANAS (True/False)
+    # 1. We create the BOOLEAN MASKS (True/False)
     move_up = distance_traveled >= distance_threshold
     move_down = distance_traveled < 0.5
     
-    # 2. Las pasamos directamente al actualizador de terrenos (¡EL ARREGLO ESTÁ AQUÍ!)
+    # 2. We pass them directly to the terrain updater (THE FIX IS HERE!)
     if hasattr(env.scene, "terrain"):
         env.scene.terrain.update_env_origins(env_ids, move_up, move_down)
         
-    # 3. Mantenemos el cálculo de level_update solo para los logs/gráficas
+    # 3. We keep the level_update calculation only for logs/plots
     level_update = torch.zeros_like(env_ids, dtype=torch.long)
     level_update[move_up] = 1
     level_update[move_down] = -1
     
-    # Reducimos a escalar para que el Logger no colapse
+    # Reduce to a scalar so the Logger does not collapse
     mean_level_update = torch.mean(level_update.float())
     
     return mean_level_update
+
+def terrain_curriculum(
+    env, 
+    env_ids: torch.Tensor,
+    vel_reward_name: str = "track_lin_vel_xy",
+    ee_flat_penalty_name: str = "ee_flat_orientation",
+    # Umbrales
+    vel_threshold_ratio: float = 0.8, # 80% de éxito en velocidad
+    flat_threshold: float = -0.2,     # Tolerancia a la inclinación
+) -> torch.Tensor:
+    """
+    Curriculum simplificado: Solo evalúa si corre bien y la bandeja está recta.
+    Ignora torques, velocidades del brazo, etc.
+    """
+    episode_length = env.max_episode_length_s
+    
+    # Extraer SOLO las dos métricas críticas
+    vel_rewards = env.reward_manager._episode_sums[vel_reward_name][env_ids] / episode_length
+    ee_flat_penalties = env.reward_manager._episode_sums[ee_flat_penalty_name][env_ids] / episode_length
+    
+    vel_weight = env.reward_manager.get_term_cfg(vel_reward_name).weight
+    
+    # 1. ¿Logró el objetivo general? (Corre bien Y bandeja recta)
+    task_success = (vel_rewards > vel_weight * vel_threshold_ratio) & (ee_flat_penalties > flat_threshold)
+    
+    # 2. ¿Fracasó catastróficamente? (No se mueve O volcó la bandeja)
+    task_failure = (vel_rewards < vel_weight * 0.4) | (ee_flat_penalties < flat_threshold * 2.0)
+    
+    # Aplicar currículo
+    if hasattr(env.scene, "terrain"):
+        env.scene.terrain.update_env_origins(env_ids, move_up=task_success, move_down=task_failure)
+        
+    level_update = torch.zeros_like(env_ids, dtype=torch.long)
+    level_update[task_success] = 1
+    level_update[task_failure] = -1
+    
+    return torch.mean(level_update.float())
 
 def lin_vel_cmd_levels(
     env: ManagerBasedRLEnv,
@@ -72,7 +109,6 @@ def lin_vel_cmd_levels(
             ).tolist()
 
     return torch.tensor(ranges.lin_vel_x[1], device=env.device)
-
 
 def ang_vel_cmd_levels(
     env: ManagerBasedRLEnv,
@@ -104,8 +140,8 @@ def ee_target_range_curriculum(
     reward_term_name: str = "ee_position_tracking",
     axis_deltas: dict[str, tuple[float, float]] | None = None,
 ) -> torch.Tensor:
-    """Expande progresivamente el rango de posiciones objetivo de la bandeja (pos_x, pos_y,
-    pos_z del comando `tray_pose`) a medida que el agente sigue bien el objetivo actual.
+    """Progressively expands the target position range of the tray (`pos_x`, `pos_y`,
+    `pos_z` of the `tray_pose` command) as the agent follows the current target correctly.
     """
     if axis_deltas is None:
         axis_deltas = {"pos_x": (-0.05, 0.05), "pos_y": (-0.05, 0.05), "pos_z": (-0.05, 0.05)}
