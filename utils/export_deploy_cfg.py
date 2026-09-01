@@ -121,7 +121,7 @@ def export_deploy_cfg(env: ManagerBasedRLEnv, obs_groups, log_dir):
                     del term_cfg[_]
             
             # Save the observation configuration INSIDE its corresponding group
-            cfg["observations"][group_name][target_name] = term_cfg
+            cfg["observations"][group_name][obs_name] = term_cfg
 
     # --- save config file ---
     filename = os.path.join(log_dir, "params", "deploy.yaml")
