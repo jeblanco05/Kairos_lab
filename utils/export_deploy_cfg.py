@@ -65,11 +65,25 @@ def export_deploy_cfg(env: ManagerBasedRLEnv, obs_groups, log_dir):
         if hasattr(term_cfg, "clip") and term_cfg.clip is not None:
             term_cfg.clip = action_term._clip[0].detach().cpu().numpy().tolist()
 
-        if action_name in ["JointPositionAction", "JointVelocityAction"]:
+        if action_name in ["JointPositionAction", "JointVelocityAction", "base_velocity", "arm_position"]:
             if hasattr(term_cfg, "use_default_offset") and term_cfg.use_default_offset:
                 term_cfg.offset = action_term._offset[0].detach().cpu().numpy().tolist()
             else:
                 term_cfg.offset = [0.0 for _ in range(action_term.action_dim)]
+
+        # clean cfg
+        term_cfg = term_cfg.to_dict()
+
+        keys_to_remove = ["class_type", "asset_name", "debug_vis", "preserve_order", "use_default_offset"]
+        for key in keys_to_remove:
+            term_cfg.pop(key, None)
+        cfg["actions"][action_name] = term_cfg
+
+        if hasattr(action_term, "_joint_ids"):
+            if action_term._joint_ids == slice(None):
+                cfg["actions"][action_name]["joint_ids"] = None
+            else:
+                cfg["actions"][action_name]["joint_ids"] = action_term._joint_ids
 
     # --- observations ---
     cfg["observations"] = {}
