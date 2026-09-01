@@ -112,10 +112,10 @@ class KairosSceneCfg(InteractiveSceneCfg):
 @configclass
 class KairosActionsCfg:
     # Action for the base (virtual wheel joint velocity control)
-    base_velocity = MecanumChassisVelocityActionCfg()
+    JointVelocityAction = MecanumChassisVelocityActionCfg()
 
     # Action for the arm (UR5e joint position control)
-    arm_position = mdp.JointPositionActionCfg(
+    JointPositionAction = mdp.JointPositionActionCfg(
         asset_name="robot", joint_names=["arm_.*_joint"], scale=0.05, use_default_offset=True
     )
 
