@@ -21,13 +21,12 @@ The goal of the project is to train a Reinforcement Learning (RL) policy for coo
 ## Project Structure
 
 ```text
-Kairos_lab/
+Kairos_lab/train_lab/
 ├── assets/                    # USD robot assets and generated models
 ├── cfg/
 │   └── robotcfg.py            # Robot articulation configuration and actuator setup
 ├── controllers/
 │   └── local_base_action.py   # Custom local / mecanum base action controllers
-├── logs/                      # Training logs
 ├── scripts/
 │   ├── train.py               # Training entry point for PPO / RL runs
 │   ├── play.py                # Policy evaluation and visualization in simulation
