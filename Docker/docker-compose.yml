@@ -1,0 +1,33 @@
+services:
+  isaac_sim_env:
+    build:
+      context: .
+      args:
+        # Usa el UID/GID de tu usuario (por defecto 1000)
+        - UID=${UID:-1000}
+        - GID=${GID:-1000}
+    container_name: isaac_rl_container
+    network_mode: host
+    privileged: true
+    environment:
+      - DISPLAY=${DISPLAY}
+      - ACCEPT_EULA=Y
+
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["sleep infinity"]
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Actualizado a la carpeta home del nuevo usuario (devuser)
+      - ${HOME}/.Xauthority:/home/devuser/.Xauthority:rw
+      
+      # MONTAJE DEL DIRECTORIO ANTERIOR:
+      # Todo lo que esté fuera de la carpeta 'Docker' aparecerá en /workspace/proyecto
+      - ../:/workspace/my_trainlab:rw
+      
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, graphics, utility]

@@ -203,3 +203,13 @@ Typical use cases:
 - rsl-rl v3.1.2
 - Pytorch v2.5.1
 - Numpy
+
+
+Buscar papers pasar una politica de un robot a otro
+
+Aprender la tarea con GO2
+    Habria que usar una politica ya aprendida para caminar durante el entrenamiento
+
+Preparar entorno G1 29dof Dex3-1 con cámara
+
+Replicar (DoorMan Nvidia)
