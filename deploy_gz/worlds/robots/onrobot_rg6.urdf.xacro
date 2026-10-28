@@ -1,0 +1,188 @@
+<?xml version="1.0"?>
+<!--
+  OnRobot RG6 V2 Electric Gripper
+  ================================
+  Specs (from Fiche technique RG6 v1.9):
+    - Mass: ~0.78 kg (body only, without Quick Changer)
+    - Stroke: 160 mm (max finger opening)
+    - Max gripping force: 120 N (adjustable)
+    - Finger length (standard): ~100 mm
+    - Width: ~158 mm
+    - Depth: ~95 mm
+
+  This xacro defines a placeholder macro for the RG6 gripper.
+  Meshes must be provided (either from Blender conversion of RG6_v2.STEP
+  or from the Zhengxuez/rg6_gripper_description repo).
+
+  Until meshes are placed in meshes/visual/ and meshes/collision/,
+  primitive shapes (boxes/cylinders) are used as placeholders.
+-->
+<robot xmlns:xacro="http://wiki.ros.org/xacro">
+
+  <xacro:macro name="onrobot_rg6_gripper" params="parent prefix:='rg6_' *origin">
+
+    <ros2_control name="${prefix}hardware" type="system">
+      <hardware>
+        <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+      </hardware>
+      <joint name="${prefix}left_finger_joint">
+        <command_interface name="position"/>
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+    </ros2_control>
+
+    <!-- ================================================================= -->
+    <!-- Gripper body link                                                  -->
+    <!-- ================================================================= -->
+    <link name="${prefix}base_link">
+      <inertial>
+        <mass value="0.78"/>
+        <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        <inertia ixx="0.001" ixy="0.0" ixz="0.0"
+                 iyy="0.0015" iyz="0.0"
+                 izz="0.0008"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        <geometry>
+          <!-- Replace with actual mesh when available:
+          <mesh filename="package://onrobot_rg6_description/meshes/visual/rg6_body.stl" scale="0.001 0.001 0.001"/>
+          -->
+          <box size="0.095 0.158 0.10"/>
+        </geometry>
+        <material name="rg6_blue">
+          <color rgba="0.2 0.4 0.7 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.095 0.158 0.10"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <!-- Fixed joint: arm_tool0 → gripper body -->
+    <joint name="${prefix}base_joint" type="fixed">
+      <xacro:insert_block name="origin"/>
+      <parent link="${parent}"/>
+      <child link="${prefix}base_link"/>
+    </joint>
+
+    <!-- ================================================================= -->
+    <!-- Left finger                                                        -->
+    <!-- ================================================================= -->
+    <link name="${prefix}left_finger_link">
+      <inertial>
+        <mass value="0.05"/>
+        <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        <inertia ixx="0.0000433" ixy="0.0" ixz="0.0"
+                 iyy="0.0000417" iyz="0.0"
+                 izz="0.00000625"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        <geometry>
+          <!-- Replace with actual mesh when available:
+          <mesh filename="package://onrobot_rg6_description/meshes/visual/rg6_finger.stl" scale="0.001 0.001 0.001"/>
+          -->
+          <box size="0.01 0.02 0.10"/>
+        </geometry>
+        <material name="rg6_silver">
+          <color rgba="0.7 0.7 0.7 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.01 0.02 0.10"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}left_finger_joint" type="prismatic">
+      <origin xyz="0 0 0.10" rpy="0 0 0"/>
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}left_finger_link"/>
+      <axis xyz="0 1 0"/>
+      <!-- Stroke: 160 mm total = 80 mm per side -->
+      <limit lower="0.0" upper="0.08" velocity="0.15" effort="120"/>
+      <dynamics damping="10.0" friction="1.0"/>
+    </joint>
+
+    <!-- ================================================================= -->
+    <!-- Right finger (mirrors left)                                        -->
+    <!-- ================================================================= -->
+    <link name="${prefix}right_finger_link">
+      <inertial>
+        <mass value="0.05"/>
+        <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        <inertia ixx="0.0000433" ixy="0.0" ixz="0.0"
+                 iyy="0.0000417" iyz="0.0"
+                 izz="0.00000625"/>
+      </inertial>
+      <visual>
+        <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.01 0.02 0.10"/>
+        </geometry>
+        <material name="rg6_silver"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0.05" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.01 0.02 0.10"/>
+        </geometry>
+      </collision>
+    </link>
+
+    <joint name="${prefix}right_finger_joint" type="prismatic">
+      <origin xyz="0 0 0.10" rpy="0 0 0"/>
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}right_finger_link"/>
+      <axis xyz="0 -1 0"/>
+      <limit lower="0.0" upper="0.08" velocity="0.15" effort="120"/>
+      <dynamics damping="10.0" friction="1.0"/>
+      <mimic joint="${prefix}left_finger_joint" multiplier="1"/>
+    </joint>
+
+    <!-- ================================================================= -->
+    <!-- TCP (Tool Center Point) — between fingertips                       -->
+    <!-- ================================================================= -->
+    <link name="${prefix}tcp_link">
+      <inertial>
+        <mass value="0.001"/>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <inertia ixx="0.000001" ixy="0" ixz="0"
+                 iyy="0.000001" iyz="0"
+                 izz="0.000001"/>
+      </inertial>
+    </link>
+
+    <joint name="${prefix}tcp_joint" type="fixed">
+      <!-- TCP at fingertip center -->
+      <origin xyz="0 0 0.20" rpy="0 0 0"/>
+      <parent link="${prefix}base_link"/>
+      <child link="${prefix}tcp_link"/>
+    </joint>
+
+    <!-- ================================================================= -->
+    <!-- Gazebo material overrides                                          -->
+    <!-- ================================================================= -->
+    <gazebo reference="${prefix}base_link">
+      <material>Gazebo/Blue</material>
+      <self_collide>0</self_collide>
+    </gazebo>
+    <gazebo reference="${prefix}left_finger_link">
+      <material>Gazebo/Grey</material>
+      <self_collide>0</self_collide>
+    </gazebo>
+    <gazebo reference="${prefix}right_finger_link">
+      <material>Gazebo/Grey</material>
+      <self_collide>0</self_collide>
+    </gazebo>
+
+  </xacro:macro>
+
+</robot>

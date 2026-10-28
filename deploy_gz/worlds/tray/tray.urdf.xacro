@@ -1,0 +1,128 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="tray">
+
+  <xacro:macro name="tray" params="parent">
+
+    <joint name="${parent}_to_tray" type="fixed">
+      <parent link="${parent}"/>
+      <child link="tray_link"/>
+      <origin xyz="0 0 -0.1" rpy="1.5708 0 3.1415"/> 
+    </joint>
+
+    <link name="tray_link">
+      
+      <!-- 1. VISUAL ORIGINAL (Tu malla real) -->
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <mesh filename="package://kairos_deploy/worlds/tray/tray.dae" scale="2 2 2"/>
+        </geometry>
+      </visual>
+
+      <!-- ======================================================= -->
+      <!-- 2. VISUALES DE DEPURACIÓN                                 -->
+      <!-- ======================================================= -->
+      
+      <!-- BASE DE LA BANDEJA (Grosor subido a 0.02) -->
+      <!-- <visual>
+        <origin xyz="0 0.15 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.48 0.30 0.02"/>
+        </geometry>
+        <material name="red_transparent">
+          <color rgba="1.0 0.0 0.0 0.5"/>
+        </material>
+      </visual> -->
+
+      <!-- PARED FRONTAL (La más alejada) -->
+      <!-- Centro en Y: 0.30 - (0.005/2) = 0.2975 -->
+      <!-- Centro en Z: mitad base (0.01) + mitad pared (0.02) = 0.03 -->
+      <!-- <visual>
+        <origin xyz="0 0.2975 0.03" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.48 0.005 0.04"/>
+        </geometry>
+        <material name="red_transparent"/>
+      </visual> -->
+
+      <!-- PARED TRASERA (Justo en el origen) -->
+      <!-- Centro en Y: 0 + (0.005/2) = 0.0025 -->
+      <!-- <visual>
+        <origin xyz="0 0.0025 0.03" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.48 0.005 0.04"/>
+        </geometry>
+        <material name="red_transparent"/>
+      </visual> -->
+
+      <!-- PARED LATERAL DERECHA (+X) -->
+      <!-- Centro en X: 0.24 - (0.005/2) = 0.2375 -->
+      <!-- <visual>
+        <origin xyz="0.2375 0.15 0.03" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.005 0.30 0.04"/>
+        </geometry>
+        <material name="red_transparent"/>
+      </visual> -->
+
+      <!-- PARED LATERAL IZQUIERDA (-X) -->
+      <!-- <visual>
+        <origin xyz="-0.2375 0.15 0.03" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.005 0.30 0.04"/>
+        </geometry>
+        <material name="red_transparent"/>
+      </visual> -->
+
+      <!-- ======================================================= -->
+      <!-- 3. COLISIONES REALES (Coinciden con las de depuración)    -->
+      <!-- ======================================================= -->
+      
+      <collision>
+        <origin xyz="0 0.15 0" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.48 0.30 0.02"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0.2975 0.03" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.48 0.005 0.04"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0 0.0025 0.03" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.48 0.005 0.04"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="0.2375 0.15 0.03" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.005 0.30 0.04"/>
+        </geometry>
+      </collision>
+      <collision>
+        <origin xyz="-0.2375 0.15 0.03" rpy="0 0 0"/>
+        <geometry>
+          <box size="0.005 0.30 0.04"/>
+        </geometry>
+      </collision>
+
+      <!-- ======================================================= -->
+      <!-- 4. INERCIAL                                               -->
+      <!-- ======================================================= -->
+      <inertial>
+        <origin xyz="0.0 0.15 0.01" rpy="0 0 0"/> 
+        <mass value="0.2"/>
+        <inertia 
+          ixx="0.000380" ixy="0.0" ixz="0.0" 
+          iyy="0.000822" iyz="0.0" 
+          izz="0.001183"/>
+      </inertial>
+
+    </link>
+
+  </xacro:macro>
+
+</robot>

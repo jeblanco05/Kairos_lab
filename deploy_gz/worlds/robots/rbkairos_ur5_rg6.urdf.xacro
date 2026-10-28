@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<robot name="rbkairos_ur5_gripper" xmlns:xacro="http://wiki.ros.org/xacro">
+  <xacro:arg name="use_sim" default="false"/>
+  <xacro:arg name="gazebo_ignition" default="false"/>
+  <xacro:arg name="ur_type" default="ur5e"/>
+
+  <xacro:arg name="initial_positions_file" default="$(find kairos_deploy)/config/initial_positions.yaml"/>
+<xacro:property name="initial_positions_file" value="$(arg initial_positions_file)"/>
+  <!-- Include Official KAIROS+ Base Assembly from robotnik_description -->
+  <xacro:include filename="$(find robotnik_description)/robots/rbkairos/rbkairos_plus.urdf.xacro" />
+
+
+  <!-- ========================================== -->
+  <!-- GRIPPER: onrobot_rg6                       -->
+  <!-- ========================================== -->
+  <xacro:include filename="$(find kairos_deploy)/worlds/robots/onrobot_rg6.urdf.xacro"/>
+  <xacro:onrobot_rg6_gripper parent="$(arg prefix)arm_tool0" prefix="rg6_">
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+  </xacro:onrobot_rg6_gripper>
+
+  <!-- TRAY -->
+  <xacro:include filename="$(find kairos_deploy)/worlds/tray/tray.urdf.xacro" />
+ 
+  <xacro:tray 
+    parent="rg6_tcp_link">
+  </xacro:tray>
+
+  <gazebo>
+    <plugin filename="gz-sim-pose-publisher-system"
+      name="gz::sim::systems::PosePublisher">
+      <publish_link_pose>true</publish_link_pose>
+      <publish_model_pose>true</publish_model_pose>
+      <publish_visual_pose>false</publish_visual_pose>
+      <publish_collision_pose>false</publish_collision_pose>
+      <publish_sensor_pose>false</publish_sensor_pose>
+      <use_pose_vector_msg>true</use_pose_vector_msg>
+      <static_publisher>false</static_publisher>
+      <update_frequency>60</update_frequency>
+    </plugin>
+  </gazebo>
+
+</robot>

@@ -1,0 +1,42 @@
+services:
+  simulation:
+    build:
+      context: ../../robotnik_simulation
+      dockerfile: docker/Dockerfile
+      args:
+        USERNAME: robot
+    image: robotnik_simulation:jazzy-devel
+    container_name: kairos_sim_jazzy
+    environment:
+      - DISPLAY=${DISPLAY}
+      # Required for X11 forwarding
+      - QT_X11_NO_MITSHM=1
+      # NVIDIA GPU acceleration
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - __NV_PRIME_RENDER_OFFLOAD=1
+      - __GLX_VENDOR_LIBRARY_NAME=nvidia
+    runtime: nvidia
+    volumes:
+      # Mount local src directory to container workspace
+      - ./src:/home/robot/ros2_ws/src
+      # X11 Socket for GUI forwarding
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    network_mode: host
+    privileged: true
+    group_add:
+      - video
+    stdin_open: true # Equivalent to -i
+    tty: true        # Equivalent to -t
+    # Bypass devel-entrypoint.sh (crashes trying to vcs import missing repos)
+    # Instead: source ROS 2, fix workspace permissions, and keep alive
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo 'export GZ_SIM_RESOURCE_PATH="/home/robot/ros2_ws/install/kairos_deploy/share:$$GZ_SIM_RESOURCE_PATH"' >> /home/robot/.bashrc
+        source /opt/ros/jazzy/setup.bash
+        chown -R robot:robot /home/robot/ros2_ws/src 2>/dev/null || true
+        chmod a+rw /dev/dri/* 2>/dev/null || true
+        exec gosu robot sleep infinity
+
+    
