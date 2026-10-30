@@ -37,9 +37,7 @@ def generate_launch_description():
     # ---------------------------------------------------------------------
     # Paquetes
     # ---------------------------------------------------------------------
-    kairos_deploy_share = os.path.expanduser(
-            "~/ros2_ws/install/kairos_deploy/share"
-        )
+    kairos_deploy_share = get_package_share_directory("kairos_deploy")
     robotnik_gazebo_share = get_package_share_directory("robotnik_gazebo_ignition")
 
     spawn_world_launch = os.path.join(
@@ -137,9 +135,11 @@ def generate_launch_description():
             "robot_id": "robot",
             "robot": "rbkairos",
             "robot_model": "rbkairos_plus",
-            "robot_xacro_path": os.path.expanduser(
-                "~/ros2_ws/src/Kairos_deploy/worlds/robots/"
-                "rbkairos_ur5_rg6.urdf.xacro"
+            "robot_xacro_path": os.path.join(
+                kairos_deploy_share,
+                "worlds",
+                "robots",
+                "rbkairos_ur5_rg6.urdf.xacro",
             ),
             "initial_positions_file": kairos_deploy_share + "/config/initial_positions.yaml",
             "x": robot_x,
@@ -210,9 +210,8 @@ def generate_launch_description():
             # ---------------------------
             DeclareLaunchArgument(
                 "world_path",
-                default_value=os.path.expanduser(
-                    "~/ros2_ws/install/kairos_deploy/share/"
-                    "kairos_deploy/worlds/piramids.sdf"
+                default_value=os.path.join(
+                    kairos_deploy_share, "worlds", "piramids.sdf"
                 ),
                 description="Ruta absoluta al mundo SDF de Gazebo.",
             ),

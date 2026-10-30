@@ -1,12 +1,26 @@
 services:
-  simulation:
+  # Build dependency: simulation inherits this image. The helper container
+  # exits immediately if Compose starts it; it does not launch a second sim.
+  robotnik_base:
     build:
-      context: ../../robotnik_simulation
+      context: ../../../robotnik_simulation
       dockerfile: docker/Dockerfile
       args:
         USERNAME: robot
     image: robotnik_simulation:jazzy-devel
+    entrypoint: ["/bin/true"]
+
+  simulation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      additional_contexts:
+        robotnik_base: service:robotnik_base
+    image: kairos_deploy:jazzy
     container_name: kairos_sim_jazzy
+    # Start as root so the startup command can fix mounted-volume permissions
+    # and then drop privileges with gosu.
+    user: "0:0"
     environment:
       - DISPLAY=${DISPLAY}
       # Required for X11 forwarding
@@ -19,7 +33,7 @@ services:
     runtime: nvidia
     volumes:
       # Mount local src directory to container workspace
-      - ./src:/home/robot/ros2_ws/src
+      - ../../..:/home/robot/ros2_ws/src
       # X11 Socket for GUI forwarding
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
     network_mode: host
@@ -35,8 +49,12 @@ services:
       - |
         echo 'export GZ_SIM_RESOURCE_PATH="/home/robot/ros2_ws/install/kairos_deploy/share:$$GZ_SIM_RESOURCE_PATH"' >> /home/robot/.bashrc
         source /opt/ros/jazzy/setup.bash
+        PROFILE_SRC=/home/robot/ros2_ws/src/Kairos_lab/deploy_gz/config/rbkairos_profile
+        PROFILE_DST=/home/robot/ros2_ws/src/robotnik_simulation/robotnik_gazebo_ignition/config/profile/rbkairos
+        for f in rbkairos_ros2_control.yaml rbkairos_plus_ros2_control.yaml; do
+          cp "$$PROFILE_SRC/$$f" "$$PROFILE_DST/$$f" || echo "AVISO: no se pudo copiar $$f"
+        done
+        chown robot:ubuntu /home/robot/ros2_ws 2>/dev/null || true
         chown -R robot:robot /home/robot/ros2_ws/src 2>/dev/null || true
         chmod a+rw /dev/dri/* 2>/dev/null || true
         exec gosu robot sleep infinity
-
-    

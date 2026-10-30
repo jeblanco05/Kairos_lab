@@ -84,8 +84,8 @@ ament_target_dependencies(tray_tilt_eval_node
 
 ## 5. Enlazar dependencias de ONNX Runtime y yaml-cpp
 if(onnxruntime_FOUND)
-  target_link_libraries(rl_inference_node onnxruntime yaml-cpp)
-  target_link_libraries(tray_tilt_eval_node onnxruntime yaml-cpp)
+  target_link_libraries(rl_inference_node onnxruntime::onnxruntime yaml-cpp)
+  target_link_libraries(tray_tilt_eval_node onnxruntime::onnxruntime yaml-cpp)
 else()
   target_include_directories(rl_inference_node PUBLIC ${ONNXRUNTIME_INCLUDE_DIR})
   target_link_libraries(rl_inference_node ${ONNXRUNTIME_LIB} yaml-cpp)
@@ -113,6 +113,7 @@ install(DIRECTORY
 
 install(PROGRAMS
   scripts/spawn_cube_on_tray.py
+  scripts/twist_relay.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

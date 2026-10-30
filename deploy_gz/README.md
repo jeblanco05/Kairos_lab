@@ -15,23 +15,29 @@ rbkairos_deploy/
     └── src/
         └── rl_inference_node.cpp
 
-sudo apt install ros-jazzy-ur-simulation-gz
-
-colcon build --symlink-install --packages-select kairos_deploy
-source install/setup.bash
-export GZ_SIM_RESOURCE_PATH="$HOME/ros2_ws/install/kairos_deploy/share:$GZ_SIM_RESOURCE_PATH"
-
 ## Build
+
+git clone https://github.com/jeblanco05/Kairos_lab.git
 
 git clone https://github.com/RobotnikAutomation/robotnik_simulation.git
 
 
+cd Kairos_lab/deploy_gz/Docker
+docker compose up -d --build --force-recreate simulation
+docker exec -it -u robot kairos_sim_jazzy bash
+
+sudo apt update && sudo apt install ros-jazzy-mecanum-drive-controller
+
+cd /home/robot/ros2_ws
+colcon build --symlink-install 
+source install/setup.bash
 
 ## Launchs
+1º docker exec -it -u robot kairos_sim_jazzy bash
 
-ros2 launch kairos_deploy full_simulation.launch.py launch_nav2:=true spawn_cube:=true
+2º ros2 launch kairos_deploy full_simulation.launch.py launch_nav2:=true spawn_cube:=true
 
-ros2 run kairos_deploy rl_inference_node --ros-args -p model_name:="ppo"
+3º ros2 run kairos_deploy rl_inference_node --ros-args -p model_name:="ppo"
 
 ros2 run kairos_deploy tray_tilt_eval_node --ros-args -p run_label:=policy -p test_num:=0
 ros2 run kairos_deploy tray_tilt_eval_node --ros-args \

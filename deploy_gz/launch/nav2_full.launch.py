@@ -24,7 +24,7 @@ def generate_launch_description():
 
     # --- Twist Relay (converts Twist → TwistStamped for motor controller) ---
     twist_relay_node = Node(
-        package='rbkairos_description',
+        package='kairos_deploy',
         executable='twist_relay.py',
         name='twist_relay',
         output='screen',
