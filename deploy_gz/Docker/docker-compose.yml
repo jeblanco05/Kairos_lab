@@ -56,5 +56,14 @@ services:
         done
         chown robot:ubuntu /home/robot/ros2_ws 2>/dev/null || true
         chown -R robot:robot /home/robot/ros2_ws/src 2>/dev/null || true
+        if [ ! -d /home/robot/ros2_ws/src/robotnik_description ]; then
+          GIT_TERMINAL_PROMPT=0 git clone -b my_kairos \
+            https://github.com/jeblanco05/robotnik_description.git \
+            /home/robot/ros2_ws/src/robotnik_description \
+            || echo "AVISO: no se pudo clonar robotnik_description"
+          
+          # Ajustar la propiedad al usuario robot para que pueda compilar sin problemas
+          chown -R robot:robot /home/robot/ros2_ws/src/robotnik_description 2>/dev/null || true
+        fi
         chmod a+rw /dev/dri/* 2>/dev/null || true
         exec gosu robot sleep infinity
